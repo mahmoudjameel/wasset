@@ -1,0 +1,33 @@
+@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    font-family: 'Tajawal', sans-serif;
+    direction: rtl;
+  }
+  
+  :root {
+    --radius: 0.5rem;
+    --primary: #001731;
+    --background: #F8FAFC;
+    --card: #FFFFFF;
+    --text: #374151;
+    --success: #10B981;
+    --warning: #F59E0B;
+    --danger: #EF4444;
+  }
+}
+
+
+
+img {
+  object-position: top;
+}
+
+.fixed {
+  position: fixed;
+}
