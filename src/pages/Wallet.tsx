@@ -8,6 +8,7 @@ const Wallet = () => {
   const [wallets, setWallets] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [stats, setStats] = useState({
     totalBalance: 0,
     totalAvailable: 0,
@@ -62,6 +63,9 @@ const Wallet = () => {
     }
   };
 
+  const withdrawalTransactions = transactions.filter((tx) => tx.type === 'withdrawal');
+  const pendingWithdrawals = withdrawalTransactions.filter((tx) => tx.status === 'pending');
+
   const getTypeLabel = (type: string) => {
     switch (type) {
       case 'deposit':
@@ -104,6 +108,57 @@ const Wallet = () => {
         return <TrendingDown size={18} className="text-red-600" />;
       default:
         return <Clock size={18} className="text-gray-600" />;
+    }
+  };
+
+  const getPaymentMethodLabel = (method?: string) => {
+    switch (method) {
+      case 'bank_transfer':
+        return 'تحويل بنكي';
+      case 'vodafone_cash':
+        return 'فودافون كاش';
+      case 'etisalat_cash':
+        return 'اتصالات كاش';
+      case 'orange_cash':
+        return 'أورنج كاش';
+      case 'we_pay':
+        return 'WE Pay';
+      default:
+        return method || 'غير محدد';
+    }
+  };
+
+  const handleApproveWithdrawal = async (transactionId: string) => {
+    try {
+      setActionLoadingId(transactionId);
+
+      if (API_CONFIG.USE_FIRESTORE && !API_CONFIG.USE_MOCK_DATA) {
+        await firestoreWalletService.approveWithdrawal(transactionId);
+      }
+
+      await fetchData();
+    } catch (error: any) {
+      console.error('خطأ في الموافقة على السحب:', error);
+      alert(error?.message || 'فشل في الموافقة على طلب السحب');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleCancelWithdrawal = async (transactionId: string) => {
+    try {
+      setActionLoadingId(transactionId);
+
+      if (API_CONFIG.USE_FIRESTORE && !API_CONFIG.USE_MOCK_DATA) {
+        await firestoreWalletService.cancelWithdrawal(transactionId);
+      }
+
+      await fetchData();
+    } catch (error: any) {
+      console.error('خطأ في إلغاء السحب:', error);
+      alert(error?.message || 'فشل في إلغاء طلب السحب');
+    } finally {
+      setActionLoadingId(null);
     }
   };
 
@@ -173,6 +228,100 @@ const Wallet = () => {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Withdrawal Requests */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100">
+        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+          <h2 className="text-lg font-bold text-[#001731]">طلبات سحب الأموال</h2>
+          <span className="text-sm text-gray-500">
+            المعلّقة: {pendingWithdrawals.length} / الإجمالي: {withdrawalTransactions.length}
+          </span>
+        </div>
+
+        {withdrawalTransactions.length === 0 ? (
+          <div className="px-6 py-8 text-center text-gray-500 text-sm">
+            لا توجد طلبات سحب حتى الآن
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="text-right px-6 py-4 text-sm font-semibold text-gray-700">المستخدم</th>
+                  <th className="text-right px-6 py-4 text-sm font-semibold text-gray-700">المبلغ</th>
+                  <th className="text-right px-6 py-4 text-sm font-semibold text-gray-700">طريقة التحويل</th>
+                  <th className="text-right px-6 py-4 text-sm font-semibold text-gray-700">بيانات الحساب / الهاتف</th>
+                  <th className="text-right px-6 py-4 text-sm font-semibold text-gray-700">الحالة</th>
+                  <th className="text-right px-6 py-4 text-sm font-semibold text-gray-700">التاريخ</th>
+                  <th className="text-right px-6 py-4 text-sm font-semibold text-gray-700">الإجراءات</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {withdrawalTransactions.map((tx) => (
+                  <tr key={tx.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 text-sm text-gray-900">
+                      <p className="font-medium">{tx.userId || 'غير محدد'}</p>
+                    </td>
+                    <td className="px-6 py-4 text-sm">
+                      <span className="font-bold text-red-600">
+                        {Math.abs(tx.amount).toLocaleString('ar-EG')} جنيه
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-700">
+                      {getPaymentMethodLabel(tx.paymentMethod)}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-700">
+                      {tx.accountInfo || '-'}
+                    </td>
+                    <td className="px-6 py-4">
+                      <span
+                        className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${
+                          tx.status === 'completed'
+                            ? 'bg-green-100 text-green-800'
+                            : tx.status === 'pending'
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}
+                      >
+                        {tx.status === 'completed'
+                          ? 'مكتمل'
+                          : tx.status === 'pending'
+                          ? 'قيد الانتظار'
+                          : 'مرفوض'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-500">
+                      {new Date(tx.createdAt).toLocaleString('ar-EG')}
+                    </td>
+                    <td className="px-6 py-4">
+                      {tx.status === 'pending' ? (
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            onClick={() => handleApproveWithdrawal(tx.id)}
+                            disabled={actionLoadingId === tx.id}
+                            className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-sm hover:bg-green-700 disabled:opacity-60"
+                          >
+                            {actionLoadingId === tx.id ? 'جاري التحويل...' : 'تحويل المبلغ'}
+                          </button>
+                          <button
+                            onClick={() => handleCancelWithdrawal(tx.id)}
+                            disabled={actionLoadingId === tx.id}
+                            className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-sm hover:bg-red-700 disabled:opacity-60"
+                          >
+                            رفض / إلغاء
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-gray-400">تمت معالجته</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Recent Transactions */}

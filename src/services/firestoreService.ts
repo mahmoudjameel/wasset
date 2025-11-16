@@ -1,4 +1,5 @@
 import {
+  addDoc,
   collection,
   doc,
   getDoc,
@@ -12,6 +13,8 @@ import {
   deleteDoc,
   serverTimestamp,
   Timestamp,
+  runTransaction,
+  increment,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
@@ -529,6 +532,10 @@ export interface FirestoreWalletTransaction {
   description: string;
   status: string;
   createdAt: Date;
+  paymentMethod?: string;
+  accountInfo?: string;
+  balanceBefore?: number;
+  balanceAfter?: number;
 }
 
 export const firestoreWalletService = {
@@ -552,10 +559,155 @@ export const firestoreWalletService = {
           description: data.description || '',
           status: data.status || 'pending',
           createdAt: convertTimestamp(data.createdAt),
+          paymentMethod: data.paymentMethod || '',
+          accountInfo: data.accountInfo || '',
+          balanceBefore: data.balanceBefore ?? 0,
+          balanceAfter:
+            data.balanceAfter !== undefined
+              ? data.balanceAfter
+              : data.balanceBefore !== undefined
+              ? data.balanceBefore
+              : 0,
         };
       });
     } catch (error) {
       console.error('Error fetching wallet transactions from Firestore:', error);
+      throw error;
+    }
+  },
+
+  approveWithdrawal: async (transactionId: string): Promise<void> => {
+    try {
+      const result = await runTransaction(db, async (transaction) => {
+        const transactionRef = doc(db, 'wallet_transactions', transactionId);
+        const transactionSnap = await transaction.get(transactionRef);
+
+        if (!transactionSnap.exists()) {
+          throw new Error('معاملة السحب غير موجودة');
+        }
+
+        const transactionData = transactionSnap.data() as any;
+
+        if (transactionData.status !== 'pending') {
+          throw new Error('المعاملة ليست في حالة انتظار');
+        }
+
+        if (transactionData.type !== 'withdrawal') {
+          throw new Error('هذه ليست معاملة سحب');
+        }
+
+        const userId = transactionData.userId;
+        if (!userId) {
+          throw new Error('معرّف المستخدم غير موجود في المعاملة');
+        }
+
+        const walletRef = doc(db, 'wallets', userId);
+        const walletSnap = await transaction.get(walletRef);
+
+        if (!walletSnap.exists()) {
+          throw new Error('المحفظة غير موجودة');
+        }
+
+        const walletData = walletSnap.data() as any;
+        const withdrawAmount = Math.abs(transactionData.amount || 0);
+
+        transaction.update(walletRef, {
+          balance: increment(-withdrawAmount),
+          holdBalance: increment(-withdrawAmount),
+          updatedAt: serverTimestamp(),
+        });
+
+        transaction.update(transactionRef, {
+          status: 'completed',
+          completedAt: serverTimestamp(),
+          balanceAfter: (walletData.balance || 0) - withdrawAmount,
+          updatedAt: serverTimestamp(),
+        });
+
+        return { userId, withdrawAmount };
+      });
+
+      if (result?.userId) {
+        const amountText = result.withdrawAmount.toLocaleString('ar-EG');
+        await addDoc(collection(db, 'notifications'), {
+          userId: result.userId,
+          type: 'payment',
+          title: 'تم تحويل طلب السحب',
+          message: `تمت الموافقة على طلب السحب وتحويل مبلغ ${amountText} ج.م إلى حسابك.`,
+          read: false,
+          relatedId: transactionId,
+          createdAt: serverTimestamp(),
+        });
+      }
+    } catch (error) {
+      console.error('Error approving withdrawal:', error);
+      throw error;
+    }
+  },
+
+  cancelWithdrawal: async (transactionId: string): Promise<void> => {
+    try {
+      const result = await runTransaction(db, async (transaction) => {
+        const transactionRef = doc(db, 'wallet_transactions', transactionId);
+        const transactionSnap = await transaction.get(transactionRef);
+
+        if (!transactionSnap.exists()) {
+          throw new Error('معاملة السحب غير موجودة');
+        }
+
+        const transactionData = transactionSnap.data() as any;
+
+        if (transactionData.status !== 'pending') {
+          throw new Error('لا يمكن إلغاء معاملة ليست في حالة انتظار');
+        }
+
+        if (transactionData.type !== 'withdrawal') {
+          throw new Error('هذه ليست معاملة سحب');
+        }
+
+        const userId = transactionData.userId;
+        if (!userId) {
+          throw new Error('معرّف المستخدم غير موجود في المعاملة');
+        }
+
+        const walletRef = doc(db, 'wallets', userId);
+        const walletSnap = await transaction.get(walletRef);
+
+        if (!walletSnap.exists()) {
+          throw new Error('المحفظة غير موجودة');
+        }
+
+        const withdrawAmount = Math.abs(transactionData.amount || 0);
+
+        transaction.update(walletRef, {
+          availableBalance: increment(withdrawAmount),
+          holdBalance: increment(-withdrawAmount),
+          totalWithdrawals: increment(-withdrawAmount),
+          updatedAt: serverTimestamp(),
+        });
+
+        transaction.update(transactionRef, {
+          status: 'failed',
+          updatedAt: serverTimestamp(),
+        });
+
+        return { userId, withdrawAmount };
+      });
+
+      if (result?.userId) {
+        const amountText = result.withdrawAmount.toLocaleString('ar-EG');
+        await addDoc(collection(db, 'notifications'), {
+          userId: result.userId,
+          type: 'payment',
+          title: 'تم رفض طلب السحب',
+          message: `تم رفض طلب السحب وإرجاع مبلغ ${amountText} ج.م إلى رصيدك المتاح.`,
+          read: false,
+          relatedId: transactionId,
+          createdAt: serverTimestamp(),
+        });
+      }
+    } catch (error) {
+      console.error('Error cancelling withdrawal:', error);
       throw error;
     }
   },
